@@ -1,4 +1,4 @@
-# svg-alchemy (https://pavelverigo.github.io/freecell/)
+# svg-alchemy (https://pavelverigo.github.io/svg-alchemy/)
 
 Needed tool to tessellate simple SVG into triangle mesh, that will be consumed by other applications.
 
