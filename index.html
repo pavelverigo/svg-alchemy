@@ -36,7 +36,6 @@ h1 {
 }
 
 #tess_download_button {
-    margin: 10px auto;
     padding: 10px;
 
     font-family: monospace;
@@ -45,6 +44,18 @@ h1 {
 
 #color_input_label {
     margin: 0px 0px 0px 20px;
+    font-family: monospace;
+    font-size: 20px;
+}
+
+#tess_filename_input_label {
+    font-family: monospace;
+    font-size: 20px;
+}
+
+#tess_filename_input {
+    margin: 0px 20px 0px 0px;
+    min-width: 350px;
     font-family: monospace;
     font-size: 20px;
 }
@@ -93,7 +104,11 @@ textarea {
             <input type="color" id="сolor_input" value="#800080">
         </div>
 
-        <button id="tess_download_button">Download tesselated mesh file</button>
+        <div>
+            <label for="tess_filename_input" id="tess_filename_input_label">Filename: </label>
+            <input type="text" id="tess_filename_input">
+            <button id="tess_download_button">Download tesselated mesh file</button>
+        </div>
     </div>
 
     <div class="right-column">
@@ -117,6 +132,7 @@ textarea {
 <script type="module">
 
 // https://dev.w3.org/SVG/tools/svgweb/samples/svg-files/ hg0
+const initial_svg_name = "hg0.svg";
 const initial_svg =
 `<svg viewBox='0 0 103 98' xmlns='http://www.w3.org/2000/svg'>
 <path d='M89,71c15-26-3-68-38-64c-31,4-31,37-4,45c24,6,5,21,6,31c0,10,20,14,36-12M16,37c-5,0-8,5-8,9c1,5,5,9,10,8c5,0,8-4,8-9c-1-5-5-9-10-8' fill='#1b1a1b'/>
@@ -143,6 +159,9 @@ const canvas_width = canvas.width;
 const canvas_height = canvas.width;
 canvas.style.backgroundColor = color_input.value;
 
+const tess_filename_input = document.getElementById("tess_filename_input");
+tess_filename_input.value = initial_svg_name + ".tess";
+
 const svg_input = document.getElementById("svg_input");
 
 const svg_in_text = document.getElementById("svg_in_text");
@@ -155,32 +174,30 @@ let current_tessellate_info = null;
 
 wireframe_button.addEventListener("click", () => {
     wireframe_enabled = !wireframe_enabled;
-    wireframe_button.textContent = wireframe_enabled ? "SHOW ONLY WIREFRAME: ON" : "SHOW ONLY WIREFRAME: FALSE";
+    wireframe_button.textContent = wireframe_enabled ? "SHOW ONLY WIREFRAME: ON" : "SHOW ONLY WIREFRAME: OFF";
     draw_svg_in_canvas();
 });
 
-color_input.addEventListener('input', () => {
+color_input.addEventListener("input", () => {
     canvas.style.backgroundColor = color_input.value;
 });
 
-tess_download_button.addEventListener('click', () => {
-    const data = gen_tessellation_file()
-    const blob = new Blob([data], { type: 'text/plain' });
+tess_download_button.addEventListener("click", () => {
+    const data = gen_tessellation_file();
+    const blob = new Blob([data], { type: "text/plain" });
 
     { // HACK HACK HACK, idk is there alternative without 3rd party lib
         const url = window.URL.createObjectURL(blob);
 
-        const a = document.createElement('a');
+        const a = document.createElement("a");
         a.href = url;
-        a.download = 'tessellation.out';
+        a.download = tess_filename_input.value;
         document.body.appendChild(a);
         a.click();
         document.body.removeChild(a);
         window.URL.revokeObjectURL(url);
     }
 });
-
-// start
 
 {
     const uint8_view = new TextEncoder().encode(initial_svg);
@@ -200,18 +217,30 @@ function gen_tessellation_file() {
     const vertices = current_tessellate_info.vertices();
     const colors = current_tessellate_info.colors();
 
+    const view_box = current_tessellate_info.view_box();
+    const rect = current_tessellate_info.rect();
+
     let final_string = "";
+
+    final_string += `${rect.width} ${rect.height}\n`;
+
+    final_string += `${view_box.left} ${view_box.top} ${view_box.right} ${view_box.bottom}\n`;
+
+    const v_count = colors.length;
+    final_string += `${v_count}\n`;
+    for (let i = 0; i < v_count; i += 1) {
+        const v1_color = colors[i];
+        const r = ((v1_color >> 24) & 0xFF) / 255;
+        const g = ((v1_color >> 16) & 0xFF) / 255;
+        const b = ((v1_color >> 8) & 0xFF) / 255;
+        final_string += `${vertices[2 * i]} ${vertices[2 * i + 1]} ${r} ${g} ${b}\n`;
+    }
 
     final_string += `${indices.length}\n`;
     for (let i = 0; i < indices.length; i += 1) {
         final_string += `${indices[i]}\n`;
     }
 
-    const v_count = colors.length;
-    final_string += `${v_count}\n`;
-    for (let i = 0; i < v_count; i += 1) {
-        final_string += `${vertices[2 * i]} ${vertices[2 * i + 1]} ${colors[i]}\n`;
-    }
     return final_string;
 }
 
@@ -221,8 +250,6 @@ function draw_svg_in_canvas() {
     const indices = current_tessellate_info.indices();
     const vertices = current_tessellate_info.vertices();
     const colors = current_tessellate_info.colors();
-    // const svg_width = current_tessellate_info.size_width();
-    // const svg_height = current_tessellate_info.size_height();
 
     const view_box = current_tessellate_info.view_box();
     const view_box_width = view_box.right - view_box.left;
@@ -295,6 +322,8 @@ svg_input.addEventListener("change", (change_event) => {
 
             const simplified_svg = simplify_svg(uint8_view);
             svg_out_text.value = new TextDecoder().decode(simplified_svg);
+
+            tess_filename_input.value = file.name + ".tess";
         };
         
         reader.readAsArrayBuffer(file);

@@ -65,12 +65,11 @@ impl TessellateOut {
         JsValue::from(js_obj)
     }
 
-    pub fn size_width(&self) -> f32 {
-        self.size.width()
-    }
-
-    pub fn size_height(&self) -> f32 {
-        self.size.height()
+    pub fn rect(&self) -> JsValue  {
+        let js_obj = Object::new();
+        Reflect::set(&js_obj, &JsValue::from_str("width"), &JsValue::from(self.size.width())).unwrap();
+        Reflect::set(&js_obj, &JsValue::from_str("height"), &JsValue::from(self.size.height())).unwrap();
+        JsValue::from(js_obj)
     }
 }
 
