@@ -13,10 +13,19 @@ use wasm_bindgen::prelude::*;
 
 use log::Level;
 
-pub const FALLBACK_COLOR: usvg::Color = usvg::Color {
-    red: 0,
-    green: 0,
-    blue: 0,
+#[derive(Clone, Copy)]
+struct Color {
+    r: f32,
+    g: f32,
+    b: f32,
+    a: f32,
+}
+
+const FALLBACK_COLOR: Color = Color {
+    r: 0.0,
+    g: 0.0,
+    b: 0.0,
+    a: 1.0,
 };
 
 #[wasm_bindgen]
@@ -39,16 +48,15 @@ pub struct TessellateOut {
 #[wasm_bindgen]
 impl TessellateOut {
     pub fn vertices(&self) -> Vec<f32> {
-        self.mesh.vertices.iter().map(|v| v.pos.to_vec()).flatten().collect()
-    }
-
-    pub fn colors(&self) -> Vec<u32> {
-        self.mesh.vertices.iter().map(|v| {
-            let r = u32::from(v.color.red);
-            let g = u32::from(v.color.green);
-            let b = u32::from(v.color.blue);
-            let a: u32 = 255;
-            (r << 24) | (g << 16) | (b << 8) | a
+        self.mesh.vertices.iter().flat_map(|v| {
+            vec![
+                v.pos[0],
+                v.pos[1],
+                v.color.r,
+                v.color.g,
+                v.color.b,
+                v.color.a,
+            ]
         }).collect()
     }
 
@@ -73,6 +81,15 @@ impl TessellateOut {
     }
 }
 
+fn abs_group_opacity(node: &usvg_tree::Node) -> f32 {
+    let mut res: f32 = 1.0;
+    for p in node.ancestors() {
+        if let usvg::NodeKind::Group(ref g) = *p.borrow() {
+            res *= g.opacity.get();
+        }
+    }
+    res
+}
 
 #[wasm_bindgen]
 pub fn tessellate_svg(svg_data: Vec<u8>) -> TessellateOut {
@@ -95,10 +112,14 @@ pub fn tessellate_svg(svg_data: Vec<u8>) -> TessellateOut {
             usvg::NodeKind::Text(_) => (),
             usvg::NodeKind::Path(ref p) => {
                 if let Some(ref fill) = p.fill {
-                    // fall back to always use color fill
-                    // no gradients (yet?)
-                    let color = match fill.paint {
-                        usvg::Paint::Color(c) => c,
+                    let group_opacity = abs_group_opacity(&node);
+                    let color: Color = match fill.paint {
+                        usvg::Paint::Color(c) => Color {
+                            r: (c.red as f32) / 255.0,
+                            g: (c.green as f32) / 255.0,
+                            b: (c.blue as f32) / 255.0,
+                            a: fill.opacity.get() * group_opacity,
+                        },
                         _ => FALLBACK_COLOR,
                     };
     
@@ -118,7 +139,21 @@ pub fn tessellate_svg(svg_data: Vec<u8>) -> TessellateOut {
                 }
     
                 if let Some(ref stroke) = p.stroke {
-                    let (stroke_color, stroke_opts) = convert_stroke(stroke, tolerance);
+                    let group_opacity = abs_group_opacity(&node);
+                    let color: Color = match stroke.paint {
+                        usvg::Paint::Color(c) => Color {
+                            r: (c.red as f32) / 255.0,
+                            g: (c.green as f32) / 255.0,
+                            b: (c.blue as f32) / 255.0,
+                            a: stroke.opacity.get() * group_opacity,
+                        },
+                        _ => FALLBACK_COLOR,
+                    };
+
+                    let stroke_opts = convert_stroke(stroke, tolerance);
+
+                    log::debug!("{} {} {} {}", color.r, color.g, color.b, color.a);
+
                     let _ = stroke_tess.tessellate(
                         PathConvIter::new(p),
                             &stroke_opts.with_tolerance(tolerance),
@@ -126,7 +161,7 @@ pub fn tessellate_svg(svg_data: Vec<u8>) -> TessellateOut {
                                 &mut mesh,
                                 VertexConstructor {
                                     transform: node.abs_transform(),
-                                    color: stroke_color,
+                                    color: color,
                                 },
                             ),
                     );
@@ -256,11 +291,7 @@ impl<'l> Iterator for PathConvIter<'l> {
     }
 }
 
-fn convert_stroke(s: &usvg::Stroke, tolerance: f32) -> (usvg::Color, StrokeOptions) {
-    let color = match s.paint {
-        usvg::Paint::Color(c) => c,
-        _ => FALLBACK_COLOR,
-    };
+fn convert_stroke(s: &usvg::Stroke, tolerance: f32) -> StrokeOptions {
     let linecap = match s.linecap {
         usvg::LineCap::Butt => tessellation::LineCap::Butt,
         usvg::LineCap::Square => tessellation::LineCap::Square,
@@ -278,17 +309,17 @@ fn convert_stroke(s: &usvg::Stroke, tolerance: f32) -> (usvg::Color, StrokeOptio
         .with_line_cap(linecap)
         .with_line_join(linejoin);
 
-    (color, opt)
+    opt
 }
 
 struct MyVertex {
     pos: [f32; 2],
-    color: usvg::Color,
+    color: Color,
 }
 
 struct VertexConstructor {
     transform: usvg::Transform,
-    color: usvg::Color,
+    color: Color,
 }
 
 impl FillVertexConstructor<MyVertex> for VertexConstructor {

@@ -100,8 +100,8 @@ textarea {
         <div>
             <button id="wireframe_button">SHOW ONLY WIREFRAME: OFF</button>
 
-            <label for="сolor_input" id="color_input_label">Canvas background color: </label>
-            <input type="color" id="сolor_input" value="#800080">
+            <label for="color_input" id="color_input_label">Canvas background color: </label>
+            <input type="color" id="color_input" value="#800080">
         </div>
 
         <div>
@@ -146,21 +146,22 @@ const initial_svg =
 </svg>
 `;
 
-import init, { add, tessellate_svg, simplify_svg } from './pkg/svg_alchemy.js';
+import init, { add, tessellate_svg, simplify_svg } from "./pkg/svg_alchemy.js";
+import { gl_init, gl_draw_triangles, gl_draw_wireframe, gl_set_clear_color } from "./gl.js";
 
 await init();
 
-const color_input = document.getElementById("сolor_input");
+const color_input = document.getElementById("color_input");
 const tess_download_button = document.getElementById("tess_download_button");
 
 const canvas = document.getElementById("canvas");
-const ctx = canvas.getContext("2d");
 const canvas_width = canvas.width;
 const canvas_height = canvas.width;
-canvas.style.backgroundColor = color_input.value;
+
+const gl = gl_init(canvas);
+update_clear_color(color_input.value);
 
 const tess_filename_input = document.getElementById("tess_filename_input");
-tess_filename_input.value = initial_svg_name + ".tess";
 
 const svg_input = document.getElementById("svg_input");
 
@@ -172,14 +173,21 @@ let wireframe_enabled = false;
 
 let current_tessellate_info = null;
 
+// START
+{
+    const initial_svg_view = new TextEncoder().encode(initial_svg)
+    process_svg_data(initial_svg_name, initial_svg_view);
+}
+
 wireframe_button.addEventListener("click", () => {
     wireframe_enabled = !wireframe_enabled;
     wireframe_button.textContent = wireframe_enabled ? "SHOW ONLY WIREFRAME: ON" : "SHOW ONLY WIREFRAME: OFF";
     draw_svg_in_canvas();
 });
 
-color_input.addEventListener("input", () => {
-    canvas.style.backgroundColor = color_input.value;
+color_input.addEventListener("input", (e) => {
+    update_clear_color(color_input.value);
+    draw_svg_in_canvas();
 });
 
 tess_download_button.addEventListener("click", () => {
@@ -199,57 +207,62 @@ tess_download_button.addEventListener("click", () => {
     }
 });
 
-{
-    const uint8_view = new TextEncoder().encode(initial_svg);
-    const tessellate_info = tessellate_svg(uint8_view);
+function process_svg_data(file_name, svg_data_view) {
+    const tessellate_info = tessellate_svg(svg_data_view);
 
     current_tessellate_info = tessellate_info;
     
-    svg_in_text.value = initial_svg;
+    svg_in_text.value = new TextDecoder().decode(svg_data_view);
     draw_svg_in_canvas();
 
-    const simplified_svg = simplify_svg(uint8_view);
+    const simplified_svg = simplify_svg(svg_data_view);
     svg_out_text.value = new TextDecoder().decode(simplified_svg);
+
+    tess_filename_input.value = file_name + ".tess";
 }
 
 function gen_tessellation_file() {
-    const indices = current_tessellate_info.indices();
-    const vertices = current_tessellate_info.vertices();
-    const colors = current_tessellate_info.colors();
-
-    const view_box = current_tessellate_info.view_box();
     const rect = current_tessellate_info.rect();
+    const view_box = current_tessellate_info.view_box();
+    const vertices = current_tessellate_info.vertices();
+    const indices = current_tessellate_info.indices();
 
-    let final_string = "";
+    const buffer_size = 4 * (2 + 4 + 1 + vertices.length + 1 + indices.length);
+    const out_buffer = new ArrayBuffer(buffer_size);
 
-    final_string += `${rect.width} ${rect.height}\n`;
+    const view = new DataView(out_buffer);
+    var offset = 0;
 
-    final_string += `${view_box.left} ${view_box.top} ${view_box.right} ${view_box.bottom}\n`;
+    view.setFloat32(offset, rect.width, true);
+    view.setFloat32(offset + 4, rect.height, true);
+    offset += 8;
 
-    const v_count = colors.length;
-    final_string += `${v_count}\n`;
-    for (let i = 0; i < v_count; i += 1) {
-        const v1_color = colors[i];
-        const r = ((v1_color >> 24) & 0xFF) / 255;
-        const g = ((v1_color >> 16) & 0xFF) / 255;
-        const b = ((v1_color >> 8) & 0xFF) / 255;
-        final_string += `${vertices[2 * i]} ${vertices[2 * i + 1]} ${r} ${g} ${b}\n`;
+    view.setFloat32(offset, view_box.left, true);
+    view.setFloat32(offset + 4, view_box.top, true);
+    view.setFloat32(offset + 8, view_box.right, true);
+    view.setFloat32(offset + 12, view_box.bottom, true);
+    offset += 16;
+
+    view.setUint32(offset, vertices.length / 6, true);
+    offset += 4;
+    for (let i = 0; i < vertices.length; i += 1) {
+        view.setFloat32(offset, vertices[i], true);
+        offset += 4;
     }
 
-    final_string += `${indices.length}\n`;
+    view.setUint32(offset, indices.length, true);
+    offset += 4;
     for (let i = 0; i < indices.length; i += 1) {
-        final_string += `${indices[i]}\n`;
+        view.setUint32(offset, indices[i], true);
+        offset += 4;
     }
 
-    return final_string;
+    return out_buffer;
 }
 
 function draw_svg_in_canvas() {
-    ctx.clearRect(0, 0, canvas_width, canvas_height);
-
     const indices = current_tessellate_info.indices();
     const vertices = current_tessellate_info.vertices();
-    const colors = current_tessellate_info.colors();
 
     const view_box = current_tessellate_info.view_box();
     const view_box_width = view_box.right - view_box.left;
@@ -267,41 +280,28 @@ function draw_svg_in_canvas() {
         return scale_y * (y - view_box.top);
     };
 
-    ctx.lineWidth = 1;
-    for (let i = 0; i < indices.length; i += 3) {
-        const idx1 = indices[i] * 2;
-        const idx2 = indices[i + 1] * 2;
-        const idx3 = indices[i + 2] * 2;
-        
-        const x1 = modify_x(vertices[idx1]);
-        const y1 = modify_y(vertices[idx1 + 1]);
+    for (let i = 0; i < vertices.length; i += 6) {
+        vertices[i] = modify_x(vertices[i]);
+        vertices[i + 1] = modify_y(vertices[i + 1]);
+    }
 
-        const x2 = modify_x(vertices[idx2]);
-        const y2 = modify_y(vertices[idx2 + 1]);
-
-        const x3 = modify_x(vertices[idx3]);
-        const y3 = modify_y(vertices[idx3 + 1]);
-
-        const v1_color = colors[indices[i]];
-        const r = (v1_color >> 24) & 0xFF;
-        const g = (v1_color >> 16) & 0xFF;
-        const b = (v1_color >> 8) & 0xFF;
-        const a = (v1_color & 0xFF) / 255; // Normalize alpha to a range of 0.0 to 1.0
-
-        const rgba_color = `rgba(${r},${g},${b},${a})`;
-
-        ctx.fillStyle = rgba_color;
-        ctx.strokeStyle = rgba_color;
-        
-        ctx.beginPath();
-        ctx.moveTo(x1, y1);
-        ctx.lineTo(x2, y2);
-        ctx.lineTo(x3, y3);
-        ctx.closePath();
-        if (!wireframe_enabled) {
-            ctx.fill();
+    if (wireframe_enabled) {
+        const line_indices = new Uint32Array(indices.length * 2);
+        for (let i = 0; i < indices.length; i += 3) {
+            const i1 = indices[i];
+            const i2 = indices[i + 1];
+            const i3 = indices[i + 2];
+            line_indices[2 * i] = i1;
+            line_indices[2 * i + 1] = i2;
+            line_indices[2 * i + 2] = i1;
+            line_indices[2 * i + 3] = i3;
+            line_indices[2 * i + 4] = i2;
+            line_indices[2 * i + 5] = i3;
         }
-        ctx.stroke();
+        
+        gl_draw_wireframe(gl, vertices, line_indices);
+    } else {
+        gl_draw_triangles(gl, vertices, indices);
     }
 }
 
@@ -313,22 +313,29 @@ svg_input.addEventListener("change", (change_event) => {
         reader.onload = (onload_event) => {
             const array_buffer = onload_event.target.result;
             const uint8_view = new Uint8Array(array_buffer);
-            const tessellate_info = tessellate_svg(uint8_view);
 
-            current_tessellate_info = tessellate_info;
-            
-            svg_in_text.value = new TextDecoder().decode(array_buffer);
-            draw_svg_in_canvas();
-
-            const simplified_svg = simplify_svg(uint8_view);
-            svg_out_text.value = new TextDecoder().decode(simplified_svg);
-
-            tess_filename_input.value = file.name + ".tess";
+            process_svg_data(file.name, uint8_view);
         };
         
         reader.readAsArrayBuffer(file);
     }
 });
 
+function hex_to_rgb_f32(color_str) {
+    if (color_str.charAt(0) === '#') {
+        color_str = color_str.slice(1);
+    }
+
+    const r = parseInt(color_str.slice(0, 2), 16) / 255.0;
+    const g = parseInt(color_str.slice(2, 4), 16) / 255.0;
+    const b = parseInt(color_str.slice(4, 6), 16) / 255.0;
+
+    return [r, g, b];
+}
+
+function update_clear_color(hex_str) {
+    const rgb = hex_to_rgb_f32(hex_str);
+    gl_set_clear_color(gl, rgb[0], rgb[1], rgb[2], 1.0);
+}
 
 </script>
