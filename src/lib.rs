@@ -152,8 +152,6 @@ pub fn tessellate_svg(svg_data: Vec<u8>) -> TessellateOut {
 
                     let stroke_opts = convert_stroke(stroke, tolerance);
 
-                    log::debug!("{} {} {} {}", color.r, color.g, color.b, color.a);
-
                     let _ = stroke_tess.tessellate(
                         PathConvIter::new(p),
                             &stroke_opts.with_tolerance(tolerance),
